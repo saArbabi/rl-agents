@@ -94,6 +94,7 @@ class AbstractTreeSearchAgent(AbstractAgent):
         pass
 
     def act(self, state):
+        print('### acted ###')
         return self.plan(state)[0]
 
     def save(self, filename):
@@ -103,7 +104,7 @@ class AbstractTreeSearchAgent(AbstractAgent):
         return False
 
     def write_tree(self):
-        if self.config["display_tree"] and self.writer:
+        if self.config["display_tree"]:
             TreePlot(self.planner, max_depth=6).plot_to_writer(self.writer, epoch=self.steps, show=True)
 
 

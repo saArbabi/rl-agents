@@ -36,6 +36,7 @@ class AgentGraphics(object):
             ValueIterationGraphics.display(agent, agent_surface)
         elif isinstance(agent, MCTSAgent):
             MCTSGraphics.display(agent, agent_surface)
+
         elif isinstance(agent, IntervalRobustPlannerAgent):
             IntervalRobustPlannerGraphics.display(agent, agent_surface, sim_surface)
         elif isinstance(agent, DiscreteRobustPlannerAgent):

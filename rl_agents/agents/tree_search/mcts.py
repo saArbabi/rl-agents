@@ -132,7 +132,7 @@ class MCTS(AbstractPlanner):
     def run(self, state, observation):
         """
             Run an iteration of Monte-Carlo Tree Search, starting from a given state
-
+            Nodes: [0] (n:7, v:0.93) - [MCTSNode idx] (n, v)
         :param state: the initial environment state
         :param observation: the corresponding observation
         """
@@ -148,6 +148,7 @@ class MCTS(AbstractPlanner):
             node_observation = observation if self.config["closed_loop"] else None
             node = node.get_child(action, observation=node_observation)
             depth += 1
+        print(depth)
 
         if not node.children \
                 and depth < self.config['horizon'] \
@@ -178,6 +179,9 @@ class MCTS(AbstractPlanner):
         return total_reward
 
     def plan(self, state, observation):
+        """
+            Runs xn episodes of mcts
+        """
         for i in range(self.config['episodes']):
             if (i+1) % 10 == 0:
                 logger.debug('{} / {}'.format(i+1, self.config['episodes']))
@@ -303,4 +307,3 @@ class MCTSNode(Node):
 
     def get_value(self):
         return self.value
-

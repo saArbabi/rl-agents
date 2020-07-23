@@ -266,11 +266,13 @@ class TreePlot(object):
 
         # Figure export
         fig.canvas.draw()
-        data_str = fig.canvas.tostring_rgb()
+        data_str = fig.canvas.tostring_argb()
         if writer:
             data = np.fromstring(data_str, dtype=np.uint8, sep='')
             data = np.rollaxis(data.reshape(fig.canvas.get_width_height()[::-1] + (3,)), 2, 0)
             writer.add_image(title, data, epoch)
         if show:
-            plt.show()
+            # plt.show()
+            plt.savefig("mygraph.png")
+            pass
         plt.close()
