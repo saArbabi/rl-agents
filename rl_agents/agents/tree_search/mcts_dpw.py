@@ -126,6 +126,11 @@ class MCTS(AbstractPlanner):
         })
         return cfg
 
+    @staticmethod
+    def get_prior_policy(state, observation):
+        actions, probabilities = MCTS.prior_policy(state, observation)
+        return actions, probabilities
+
     def reset(self):
         self.root = DecisionNode(parent=None, planner=self)
 
@@ -141,20 +146,24 @@ class MCTS(AbstractPlanner):
         depth = 0
         terminal = False
         state.seed(self.np_random.randint(2**30))
-        while depth < self.config['horizon']/2 and decision_node.children and not terminal:
-            action = decision_node.sampling_rule(temperature=self.config['temperature'])
+        # if not decision_node.children:
+        #     decision_node.expand(state, self.prior_policy(state, observation))
 
+        while depth < self.config['horizon'] and decision_node.children \
+                                            and not terminal:
+            action = decision_node.sampling_rule(temperature=self.config['temperature'])
+            print(depth)
             # perform transition
+            chance_node = decision_node.get_child(action)
             observation, reward, terminal, _ = self.step(state, action)
             node_observation = observation if self.config["closed_loop"] else None
-            # decision_node = chance_node.get_child(node_observation)
-            chance_node = decision_node.get_child(action, observation=node_observation)
-            decision_node = decision_node.get_child(action, observation=node_observation)
+
+            decision_node = chance_node.get_child(node_observation)
 
             total_reward += self.config["gamma"] ** depth * reward
             depth += 1
-            print('decision value ',decision_node.value)
-            print('chance value ',chance_node.value)
+            # print('decision value ',decision_node.value)
+            # print('chance value ',chance_node.value)
 
             # print(type(self)(depth))
 
@@ -171,11 +180,11 @@ class MCTS(AbstractPlanner):
         if not decision_node.children \
                 and depth < self.config['horizon'] \
                 and (not terminal or decision_node == self.root):
-            decision_node.expand(self.prior_policy(state, observation))
+            decision_node.expand(state, self.prior_policy(state, observation))
 
         if not terminal:
             total_reward = self.evaluate(state, observation, total_reward, depth=depth)
-        decision_node.update_branch(total_reward)
+        decision_node.backup_to_root(total_reward)
 
     def evaluate(self, state, observation, total_reward=0, depth=0):
         """
@@ -195,6 +204,10 @@ class MCTS(AbstractPlanner):
             if np.all(terminal):
                 break
         return total_reward
+
+    def get_plan(self):
+        """Only return the first action, the rest is conditioned on observations"""
+        return self.root.selection_rule()
 
     def plan(self, state, observation):
         """
@@ -258,16 +271,18 @@ class DecisionNode(Node):
         else:
             return None
 
-    def expand(self, actions_distribution):
-        """
-            Expand a leaf node by creating a new child for each available action.
+    def get_child(self, action):
+        return self.children[action]
 
-        :param actions_distribution: the list of available actions and their prior probabilities
-        """
-        actions, probabilities = actions_distribution
+    def expand(self, state, actions_distribution):
+        try:
+            actions, probabilities = actions_distribution
+        except AttributeError:
+            actions = range(state.action_space.n)
+
         for i in range(len(actions)):
-            if actions[i] not in self.children:
-                self.children[actions[i]] = type(self)(self, self.planner, probabilities[i])
+            self.children[actions[i]] = (self, self.planner, probabilities[i])
+            self.children[actions[i]] = ChanceNode(self, self.planner)
 
     def update(self, total_reward):
         """
@@ -278,7 +293,7 @@ class DecisionNode(Node):
         self.count += 1
         self.value += self.K / self.count * (total_reward - self.value)
 
-    def update_branch(self, total_reward):
+    def backup_to_root(self, total_reward):
         """
             Update the whole branch from this node to the root with the total reward of the corresponding trajectory.
 
@@ -286,15 +301,7 @@ class DecisionNode(Node):
         """
         self.update(total_reward)
         if self.parent:
-            self.parent.update_branch(total_reward)
-
-    def get_child(self, action, observation=None):
-        child = self.children[action]
-        if observation is not None:
-            if str(observation) not in child.children:
-                child.children[str(observation)] = DecisionNode(parent=child, planner=self.planner, prior=0)
-            child = child.children[str(observation)]
-        return child
+            self.parent.backup_to_root(total_reward)
 
     def selection_strategy(self, temperature):
         """
@@ -307,7 +314,7 @@ class DecisionNode(Node):
             return self.get_value()
 
         # return self.value + temperature * self.prior * np.sqrt(np.log(self.parent.count) / self.count)
-        return self.get_value() + temperature * len(self.parent.children) * self.prior/(self.count+1)
+        return self.get_value() + temperature * np.sqrt(np.log(self.parent.count) / (self.count+1))
 
     def convert_visits_to_prior_in_branch(self, regularization=0.5):
         """
@@ -323,55 +330,37 @@ class DecisionNode(Node):
         for child in self.children.values():
             child.prior = regularization*(child.count+1)/total_count + regularization/len(self.children)
             child.convert_visits_to_prior_in_branch()
+
 
     def get_value(self):
         return self.value
 
 class ChanceNode(Node):
     K = 1.0
-    """ The value function first-order filter gain"""
-
     def __init__(self, parent, planner, prior=1):
+        assert parent is not None
         super(ChanceNode, self).__init__(parent, planner)
         self.value = 0
-        self.prior = prior
         self.depth = parent.depth
 
-    def selection_rule(self):
+
+    def expand(self, observation):
+        # Generate placeholder node
+        self.children[str(observation)] = DecisionNode(self, self.planner)
+
+    def get_child(self, observation, hash=False):
         if not self.children:
-            return None
-        # Tie best counts by best value
-        actions = list(self.children.keys())
-        counts = Node.all_argmax([self.children[a].count for a in actions])
-        return actions[max(counts, key=(lambda i: self.children[actions[i]].get_value()))]
+            self.expand(observation)
+        if str(observation) not in self.children:
+            if len(self.children) > 5:
+                # Randomly select a previously generated child
+                random_state = self.np_random.choice(list(self.children.keys()))
+                return self.children[random_state]
+            else:
+                # Add observation to the children set
+                self.expand(observation)
 
-    def sampling_rule(self, temperature=None):
-        """
-            Select an action from the node.
-            - if exploration is wanted with some temperature, follow the selection strategy.
-            - else, select the action with maximum visit count
-
-        :param temperature: the exploration parameter, positive or zero
-        :return: the selected action
-        """
-        if self.children:
-            actions = list(self.children.keys())
-            # Randomly tie best candidates with respect to selection strategy
-            indexes = [self.children[a].selection_strategy(temperature) for a in actions]
-            return actions[self.random_argmax(indexes)]
-        else:
-            return None
-
-    def expand(self, actions_distribution):
-        """
-            Expand a leaf node by creating a new child for each available action.
-
-        :param actions_distribution: the list of available actions and their prior probabilities
-        """
-        actions, probabilities = actions_distribution
-        for i in range(len(actions)):
-            if actions[i] not in self.children:
-                self.children[actions[i]] = type(self)(self, self.planner, probabilities[i])
+        return self.children[str(observation)]
 
     def update(self, total_reward):
         """
@@ -382,23 +371,16 @@ class ChanceNode(Node):
         self.count += 1
         self.value += self.K / self.count * (total_reward - self.value)
 
-    def update_branch(self, total_reward):
+    def backup_to_root(self, total_reward):
         """
             Update the whole branch from this node to the root with the total reward of the corresponding trajectory.
 
         :param total_reward: the total reward obtained through a trajectory passing by this node
         """
+        assert self.children
+        assert self.parent
         self.update(total_reward)
-        if self.parent:
-            self.parent.update_branch(total_reward)
-
-    def get_child(self, action, observation=None):
-        child = self.children[action]
-        if observation is not None:
-            if str(observation) not in child.children:
-                child.children[str(observation)] = ChanceNode(parent=child, planner=self.planner, prior=0)
-            child = child.children[str(observation)]
-        return child
+        self.parent.backup_to_root(total_reward)
 
     def selection_strategy(self, temperature):
         """
@@ -409,24 +391,12 @@ class ChanceNode(Node):
         """
         if not self.parent:
             return self.get_value()
+        # print('self.parent.count',self.parent.count)
+        # print('self.count',self.count)
+        # print('self.get_value()',self.get_value())
 
         # return self.value + temperature * self.prior * np.sqrt(np.log(self.parent.count) / self.count)
-        return self.get_value() + temperature * len(self.parent.children) * self.prior/(self.count+1)
-
-    def convert_visits_to_prior_in_branch(self, regularization=0.5):
-        """
-            For any node in the subtree, convert the distribution of all children visit counts to prior
-            probabilities, and reset the visit counts.
-
-        :param regularization: in [0, 1], used to add some probability mass to all children.
-                               when 0, the prior is a Boltzmann distribution of visit counts
-                               when 1, the prior is a uniform distribution
-        """
-        self.count = 0
-        total_count = sum([(child.count+1) for child in self.children.values()])
-        for child in self.children.values():
-            child.prior = regularization*(child.count+1)/total_count + regularization/len(self.children)
-            child.convert_visits_to_prior_in_branch()
+        return self.get_value() + temperature * np.sqrt(np.log(self.parent.count) / (self.count+1))
 
     def get_value(self):
         return self.value
