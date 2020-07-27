@@ -152,7 +152,8 @@ class MCTS(AbstractPlanner):
         while depth < self.config['horizon'] and decision_node.children \
                                             and not terminal:
             action = decision_node.sampling_rule(temperature=self.config['temperature'])
-            print(depth)
+            # print('value: ', self.root.value)
+
             # perform transition
             chance_node = decision_node.get_child(action)
             observation, reward, terminal, _ = self.step(state, action)
@@ -162,8 +163,11 @@ class MCTS(AbstractPlanner):
 
             total_reward += self.config["gamma"] ** depth * reward
             depth += 1
+            print(depth)
+
             # print('decision value ',decision_node.value)
             # print('chance value ',chance_node.value)
+            # print('chance node_n:', len(chance_node.children))
 
             # print(type(self)(depth))
 
@@ -176,7 +180,6 @@ class MCTS(AbstractPlanner):
             if node.children:
                 print(self.np_random.choice(list(node.children.keys())))
             """
-
         if not decision_node.children \
                 and depth < self.config['horizon'] \
                 and (not terminal or decision_node == self.root):
@@ -279,7 +282,6 @@ class DecisionNode(Node):
             actions, probabilities = actions_distribution
         except AttributeError:
             actions = range(state.action_space.n)
-
         for i in range(len(actions)):
             self.children[actions[i]] = (self, self.planner, probabilities[i])
             self.children[actions[i]] = ChanceNode(self, self.planner)
@@ -331,34 +333,39 @@ class DecisionNode(Node):
             child.prior = regularization*(child.count+1)/total_count + regularization/len(self.children)
             child.convert_visits_to_prior_in_branch()
 
-
     def get_value(self):
         return self.value
 
 class ChanceNode(Node):
     K = 1.0
+    # state progressive widenning parameters
+    k_state = 4
+    alpha_state = 0.2
+
     def __init__(self, parent, planner, prior=1):
         assert parent is not None
         super(ChanceNode, self).__init__(parent, planner)
         self.value = 0
         self.depth = parent.depth
 
-
-    def expand(self, observation):
+    def insert_state_node(self, observation):
         # Generate placeholder node
         self.children[str(observation)] = DecisionNode(self, self.planner)
 
     def get_child(self, observation, hash=False):
+        print('count',len(self.children))
+
         if not self.children:
-            self.expand(observation)
+            self.insert_state_node(observation)
         if str(observation) not in self.children:
-            if len(self.children) > 5:
+
+            if self.k_state*self.count**self.alpha_state <= len(self.children):
                 # Randomly select a previously generated child
-                random_state = self.np_random.choice(list(self.children.keys()))
+                random_state = self.planner.np_random.choice(list(self.children.keys()))
                 return self.children[random_state]
             else:
                 # Add observation to the children set
-                self.expand(observation)
+                self.insert_state_node(observation)
 
         return self.children[str(observation)]
 
