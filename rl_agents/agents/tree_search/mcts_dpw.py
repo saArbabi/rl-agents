@@ -4,19 +4,23 @@ from functools import partial
 
 from rl_agents.agents.common.factory import safe_deepcopy_env
 from rl_agents.agents.tree_search.abstract import Node, AbstractTreeSearchAgent, AbstractPlanner
-from rl_agents.agents.tree_search.olop import OLOP
 
 logger = logging.getLogger(__name__)
 
+"""
+see [Adrien Coutoux, 2011][Continuous Upper Confidence Trees]
+"""
 
-class MCTSAgent(AbstractTreeSearchAgent):
+
+class MCTSDPWAgent(AbstractTreeSearchAgent):
     """
-        An agent that uses Monte Carlo Tree Search to plan a sequence of action in an MDP.
+        An MCTS_DPW agent that uses Double Progressive Widenning for handling continuous
+        stochastic MDPs.
     """
     def make_planner(self):
-        prior_policy = MCTSAgent.policy_factory(self.config["prior_policy"])
-        rollout_policy = MCTSAgent.policy_factory(self.config["rollout_policy"])
-        return MCTS(self.env, prior_policy, rollout_policy, self.config)
+        prior_policy = MCTSDPWAgent.policy_factory(self.config["prior_policy"])
+        rollout_policy = MCTSDPWAgent.policy_factory(self.config["rollout_policy"])
+        return MCTSDPW(self.env, prior_policy, rollout_policy, self.config)
 
     @classmethod
     def default_config(cls):
@@ -33,11 +37,11 @@ class MCTSAgent(AbstractTreeSearchAgent):
     @staticmethod
     def policy_factory(policy_config):
         if policy_config["type"] == "random":
-            return MCTSAgent.random_policy
+            return MCTSDPWAgent.random_policy
         elif policy_config["type"] == "random_available":
-            return MCTSAgent.random_available_policy
+            return MCTSDPWAgent.random_available_policy
         elif policy_config["type"] == "preference":
-            return partial(MCTSAgent.preference_policy,
+            return partial(MCTSDPWAgent.preference_policy,
                            action_index=policy_config["action"],
                            ratio=policy_config["ratio"])
         else:
@@ -94,16 +98,17 @@ class MCTSAgent(AbstractTreeSearchAgent):
                 probabilities = np.ones((len(available_actions))) / (len(available_actions) - 1 + ratio)
                 probabilities[i] *= ratio
                 return available_actions, probabilities
-        return MCTSAgent.random_available_policy(state, observation)
+        return MCTSDPWAgent.random_available_policy(state, observation)
 
 
-class MCTS(AbstractPlanner):
+class MCTSDPW(AbstractPlanner):
     """
-       An implementation of Monte-Carlo Tree Search, with Upper Confidence Tree exploration.
+       An implementation of Monte-Carlo Tree Search, with Upper Confidence Tree exploration
+       and Double Progressive Widenning.
     """
     def __init__(self, env, prior_policy, rollout_policy, config=None):
         """
-            New MCTS instance.
+            New MCTSDPW instance.
 
         :param config: the mcts configuration. Use default if None.
         :param prior_policy: the prior policy used when expanding and selecting nodes
@@ -115,29 +120,41 @@ class MCTS(AbstractPlanner):
         self.rollout_policy = rollout_policy
         if not self.config["horizon"]:
             self.config["episodes"], self.config["horizon"] = \
-                OLOP.allocation(self.config["budget"], self.config["gamma"])
+                self.allocation(self.config["budget"], self.config["gamma"])
+
+    @staticmethod
+    def horizon(episodes, gamma):
+        return max(int(np.ceil(np.log(episodes) / (2 * np.log(1 / gamma)))), 1)
+
+    @staticmethod
+    def allocation(budget, gamma):
+        """
+            Allocate the computational budget into M episodes of fixed horizon L.
+        """
+        for episodes in range(1, int(budget)):
+            if episodes * MCTSDPW.horizon(episodes, gamma) > budget:
+                episodes = max(episodes - 1, 1)
+                horizon = MCTSDPW.horizon(episodes, gamma)
+                break
+        else:
+            raise ValueError("Could not split budget {} with gamma {}".format(budget, gamma))
+        return episodes, horizon
 
     @classmethod
     def default_config(cls):
-        cfg = super(MCTS, cls).default_config()
+        cfg = super(MCTSDPW, cls).default_config()
         cfg.update({
             "temperature": 2 / (1 - cfg["gamma"]),
             "closed_loop": False
         })
         return cfg
 
-    @staticmethod
-    def get_prior_policy(state, observation):
-        actions, probabilities = MCTS.prior_policy(state, observation)
-        return actions, probabilities
-
     def reset(self):
         self.root = DecisionNode(parent=None, planner=self)
 
     def run(self, state, observation):
         """
-            Run an iteration of Monte-Carlo Tree Search, starting from a given state
-            Nodes: [0] (n:7, v:0.93) - [DecisionNode idx] (n, v)
+            Run an iteration of MCTSDPW, starting from a given state
         :param state: the initial environment state
         :param observation: the corresponding observation
         """
@@ -146,15 +163,12 @@ class MCTS(AbstractPlanner):
         depth = 0
         terminal = False
         state.seed(self.np_random.randint(2**30))
-        # if not decision_node.children:
-        #     decision_node.expand(state, self.prior_policy(state, observation))
 
         while depth < self.config['horizon'] and decision_node.children \
                                             and not terminal:
             action = decision_node.sampling_rule(temperature=self.config['temperature'])
-            # print('value: ', self.root.value)
 
-            # perform transition
+            # perform an action followed by a transition
             chance_node = decision_node.get_child(action)
             observation, reward, terminal, _ = self.step(state, action)
             node_observation = observation if self.config["closed_loop"] else None
@@ -165,21 +179,6 @@ class MCTS(AbstractPlanner):
             depth += 1
             print(depth)
 
-            # print('decision value ',decision_node.value)
-            # print('chance value ',chance_node.value)
-            # print('chance node_n:', len(chance_node.children))
-
-            # print(type(self)(depth))
-
-            """
-            # print(len(node.children))
-            # print(str(observation))
-            # print(node.children.keys())
-            print('nodes:', node.children)
-        # print(self.np_random.choice([1,2,3]))
-            if node.children:
-                print(self.np_random.choice(list(node.children.keys())))
-            """
         if not decision_node.children \
                 and depth < self.config['horizon'] \
                 and (not terminal or decision_node == self.root):
@@ -187,6 +186,7 @@ class MCTS(AbstractPlanner):
 
         if not terminal:
             total_reward = self.evaluate(state, observation, total_reward, depth=depth)
+        # Backup global statistics
         decision_node.backup_to_root(total_reward)
 
     def evaluate(self, state, observation, total_reward=0, depth=0):
@@ -213,9 +213,6 @@ class MCTS(AbstractPlanner):
         return self.root.selection_rule()
 
     def plan(self, state, observation):
-        """
-            Runs xn episodes of mcts
-        """
         for i in range(self.config['episodes']):
             if (i+1) % 10 == 0:
                 logger.debug('{} / {}'.format(i+1, self.config['episodes']))
@@ -240,6 +237,9 @@ class MCTS(AbstractPlanner):
 
 
 class DecisionNode(Node):
+    # state progressive widenning parameters
+    k_action = 4
+    alpha_action = 0.2
     K = 1.0
     """ The value function first-order filter gain"""
 
@@ -283,8 +283,10 @@ class DecisionNode(Node):
         except AttributeError:
             actions = range(state.action_space.n)
         for i in range(len(actions)):
+
             self.children[actions[i]] = (self, self.planner, probabilities[i])
             self.children[actions[i]] = ChanceNode(self, self.planner)
+
 
     def update(self, total_reward):
         """
@@ -316,7 +318,8 @@ class DecisionNode(Node):
             return self.get_value()
 
         # return self.value + temperature * self.prior * np.sqrt(np.log(self.parent.count) / self.count)
-        return self.get_value() + temperature * np.sqrt(np.log(self.parent.count) / (self.count+1))
+        # return self.get_value() + temperature * np.sqrt(np.log(self.parent.count) / (self.count+1))
+        return self.get_value() + temperature * len(self.parent.children) * self.prior/(self.count+1)
 
     def convert_visits_to_prior_in_branch(self, regularization=0.5):
         """
@@ -353,8 +356,6 @@ class ChanceNode(Node):
         self.children[str(observation)] = DecisionNode(self, self.planner)
 
     def get_child(self, observation, hash=False):
-        print('count',len(self.children))
-
         if not self.children:
             self.insert_state_node(observation)
         if str(observation) not in self.children:
