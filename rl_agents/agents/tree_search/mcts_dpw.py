@@ -157,48 +157,26 @@ class MCTSDPW(AbstractPlanner):
         depth = 0
         terminal = False
         state.seed(self.np_random.randint(2**30))
-        # print('haha:', len(decision_node.children))
 
-
-        # print(self.root.count)
         while depth < self.config['horizon'] and not terminal and decision_node.count != 0:
 
 
             # perform an action followed by a transition
             chance_node, action = decision_node.get_child(state, temperature=self.config['temperature'])
-            # print('after:', len(chance_node.children))
 
             observation, reward, terminal, _ = self.step(state, action)
             node_observation = observation if self.config["closed_loop"] else None
-            # print('before:', chance_node.children)
             decision_node = chance_node.get_child(node_observation)
-            # print('after:', len(chance_node.children))
-            # print(len(chance_node.children), 'child nodes')
-
-            # print('after:', len(chance_node.children))
 
             total_reward += self.config["gamma"] ** depth * reward
             depth += 1
             print(depth)
-            # print(decision_node.depth)
-            # print(chance_node.value)
-        # print('break')
-        # print('before', total_reward)
 
         if not terminal:
             total_reward = self.evaluate(state, observation, total_reward, depth=depth)
 
         # Backup global statistics
         decision_node.backup_to_root(total_reward)
-        # print('after', total_reward)
-        # print('after', self.root.value)
-
-        if self.root.children:
-            val_col = []
-
-            for act in list(self.root.children.keys()):
-                val_col.append(self.root.children[act].count)
-            print(val_col)
 
     def evaluate(self, state, observation, total_reward=0, depth=0):
         """
@@ -234,9 +212,8 @@ class MCTSDPW(AbstractPlanner):
         super().step_planner(action)
 
 class DecisionNode(Node):
-    # action progressive widenning parameters
-    k_action = 1
-    alpha_action = 0.3
+    k_action = 1 # pw parameters
+    alpha_action = 0.3 # pw parameters
     K = 1.0
     """ The value function first-order filter gain"""
 
@@ -268,7 +245,6 @@ class DecisionNode(Node):
         return self.children[action], action
 
     def get_child(self, state, temperature=None):
-        # print(len(self.children))
         if len(self.children) == len(state.get_available_actions()) \
                 or self.k_action*self.count**self.alpha_action < len(self.children):
             # select one of previously expanded actions
@@ -310,10 +286,7 @@ class DecisionNode(Node):
             ucb_val = self.children[a].get_value() +  temperature * np.sqrt(np.log(self.count / (self.children[a].count)))
             indexes.append(ucb_val)
 
-            # TODO: Some paper return most tried aciton
-        # print(indexes)
-        # print('values',indexes)
-
+        # TODO: Some paper return most tried aciton
         action = actions[self.random_argmax(indexes)]
         return self.children[action], action
 
@@ -340,8 +313,6 @@ class ChanceNode(Node):
         obs_id = hashlib.sha1(str(observation).encode("UTF-8")).hexdigest()[:5]
         if self.k_state*self.count**self.alpha_state < len(self.children):
             obs_id = self.planner.np_random.choice(list(self.children))
-            print('decision_node_count',list(self.children))
-            # print('this is state: ',random_state)
             return self.children[obs_id]
         else:
             # Add observation to the children set
