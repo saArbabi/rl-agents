@@ -311,13 +311,14 @@ class ChanceNode(Node):
     def get_child(self, observation):
         import hashlib
         obs_id = hashlib.sha1(str(observation).encode("UTF-8")).hexdigest()[:5]
-        if self.k_state*self.count**self.alpha_state < len(self.children):
-            obs_id = self.planner.np_random.choice(list(self.children))
-            return self.children[obs_id]
-        else:
-            # Add observation to the children set
-            self.insert_state_node(obs_id)
-
+        if obs_id not in self.children:
+            if self.k_state*self.count**self.alpha_state < len(self.children):
+                obs_id = self.planner.np_random.choice(list(self.children))
+                return self.children[obs_id]
+            else:
+                # Add observation to the children set
+                self.insert_state_node(obs_id)
+        
         return self.children[obs_id]
 
     def update(self, total_reward):
