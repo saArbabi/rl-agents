@@ -148,7 +148,8 @@ class MCTS(AbstractPlanner):
             node_observation = observation if self.config["closed_loop"] else None
             node = node.get_child(action, observation=node_observation)
             depth += 1
-        print(depth)
+            print(depth)
+        print('iteration done')
 
         if not node.children \
                 and depth < self.config['horizon'] \

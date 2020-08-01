@@ -26,7 +26,7 @@ class MDPGapE(OLOP):
                 "confidence": 0.9,
                 "continuation_type": "uniform",
                 "horizon_from_accuracy": False,
-                "max_next_states_count": 1,
+                "max_next_states_count": 3,
                 "upper_bound": {
                     "type": "kullback-leibler",
                     "time": "global",
@@ -64,7 +64,7 @@ class MDPGapE(OLOP):
         :param state: the initial environment state
         """
         # We need randomness
-        state.seed(self.np_random.randint(2**30))
+        # state.seed(self.np_random.randint(2**30))
         best, challenger = None, None
         if self.root.children:
             logger.debug(" / ".join(["a{} ({}): [{:.3f}, {:.3f}]".format(k, n.count, n.value_lower, n.value_upper)
@@ -79,13 +79,15 @@ class MDPGapE(OLOP):
 
             # Perform transition
             chance_node, action = decision_node.get_child(action, state)
+            print(len(chance_node.children), 'state childdd')
+            print(h)
             observation, reward, done, _ = self.step(state, action)
             decision_node = chance_node.get_child(observation)
 
             # Update local statistics
             chance_node.update(np.nan, False)
             decision_node.update(reward, done)
-
+        print('this iteration done')
         # Backup global statistics
         decision_node.backup_to_root()
         _, best, challenger = self.root.best_arm_identification_selection()

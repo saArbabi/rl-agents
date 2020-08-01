@@ -170,14 +170,16 @@ class MCTSDPW(AbstractPlanner):
             # print('before:', chance_node.children)
             decision_node = chance_node.get_child(node_observation)
             # print('after:', len(chance_node.children))
+            # print(len(chance_node.children), 'child nodes')
 
             # print('after:', len(chance_node.children))
 
             total_reward += self.config["gamma"] ** depth * reward
             depth += 1
-            # print(depth)
-            print(decision_node.depth)
+            print(depth)
+            # print(decision_node.depth)
             # print(chance_node.value)
+        print('iteration done')
         # print('break')
         if not terminal:
             total_reward = self.evaluate(state, observation, total_reward, depth=depth)
@@ -245,7 +247,7 @@ class DecisionNode(Node):
             actions = state.get_available_actions()
         except AttributeError:
             actions = range(state.action_space.n)
-        return set(self.children.keys()).symmetric_difference(set(actions))
+        return set(self.children.keys()).symmetric_difference(actions)
 
     def insert_action_node(self, state):
         action = self.planner.np_random.choice(list(self.unexplored_actions(state)))
@@ -319,7 +321,6 @@ class ChanceNode(Node):
 
     def get_child(self, observation):
         if str(observation) not in self.children:
-            print(len(self.children), 'state childdd')
 
             # if self.k_state*self.count**self.alpha_state < len(self.children):
             if len(self.children)>0:
