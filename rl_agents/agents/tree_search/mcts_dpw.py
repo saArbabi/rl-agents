@@ -159,7 +159,10 @@ class MCTSDPW(AbstractPlanner):
         state.seed(self.np_random.randint(2**30))
         # print('haha:', len(decision_node.children))
 
-        while depth < self.config['horizon'] and decision_node.count != 0 and not terminal:
+
+        # print(self.root.count)
+        while depth < self.config['horizon'] and not terminal and decision_node.count != 0:
+
 
             # perform an action followed by a transition
             chance_node, action = decision_node.get_child(state, temperature=self.config['temperature'])
@@ -179,13 +182,23 @@ class MCTSDPW(AbstractPlanner):
             print(depth)
             # print(decision_node.depth)
             # print(chance_node.value)
-        print('iteration done')
         # print('break')
+        # print('before', total_reward)
+
         if not terminal:
             total_reward = self.evaluate(state, observation, total_reward, depth=depth)
 
         # Backup global statistics
         decision_node.backup_to_root(total_reward)
+        # print('after', total_reward)
+        # print('after', self.root.value)
+
+        if self.root.children:
+            val_col = []
+
+            for act in list(self.root.children.keys()):
+                val_col.append(self.root.children[act].count)
+            print(val_col)
 
     def evaluate(self, state, observation, total_reward=0, depth=0):
         """
@@ -222,8 +235,8 @@ class MCTSDPW(AbstractPlanner):
 
 class DecisionNode(Node):
     # action progressive widenning parameters
-    k_action = 4
-    alpha_action = 0.1
+    k_action = 1
+    alpha_action = 0.3
     K = 1.0
     """ The value function first-order filter gain"""
 
@@ -290,14 +303,17 @@ class DecisionNode(Node):
         :param temperature: the exploration parameter, positive or zero.
         :return: the selected action with maximum value and exploration bonus.
         """
+
         actions = list(self.children.keys())
         indexes = []
         for a in actions:
-            ucb_val = self.get_value() + temperature * np.sqrt(np.log(self.count / self.children[a].count))
+            ucb_val = self.children[a].get_value() +  temperature * np.sqrt(np.log(self.count / (self.children[a].count)))
             indexes.append(ucb_val)
 
             # TODO: Some paper return most tried aciton
         # print(indexes)
+        # print('values',indexes)
+
         action = actions[self.random_argmax(indexes)]
         return self.children[action], action
 
@@ -307,8 +323,8 @@ class DecisionNode(Node):
 class ChanceNode(Node):
     K = 1.0
     # state progressive widenning parameters
-    k_state = 4
-    alpha_state = 0.2
+    k_state = 1
+    alpha_state = 0.3
 
     def __init__(self, parent, planner):
         assert parent is not None
@@ -316,25 +332,22 @@ class ChanceNode(Node):
         self.value = 0
         self.depth = parent.depth
 
-    def insert_state_node(self, observation):
-        self.children[str(observation)] = DecisionNode(self, self.planner)
+    def insert_state_node(self, obs_id):
+        self.children[obs_id] = DecisionNode(self, self.planner)
 
     def get_child(self, observation):
-        if str(observation) not in self.children:
+        import hashlib
+        obs_id = hashlib.sha1(str(observation).encode("UTF-8")).hexdigest()[:5]
+        if self.k_state*self.count**self.alpha_state < len(self.children):
+            obs_id = self.planner.np_random.choice(list(self.children))
+            print('decision_node_count',list(self.children))
+            # print('this is state: ',random_state)
+            return self.children[obs_id]
+        else:
+            # Add observation to the children set
+            self.insert_state_node(obs_id)
 
-            # if self.k_state*self.count**self.alpha_state < len(self.children):
-            if len(self.children)>0:
-
-                print(len(self.children), 'state childdd')
-
-                # Randomly select a previously generated child
-                random_state = self.planner.np_random.choice(self.children)
-                return self.children[random_state]
-            else:
-                # Add observation to the children set
-                self.insert_state_node(observation)
-
-        return self.children[str(observation)]
+        return self.children[obs_id]
 
     def update(self, total_reward):
         """
