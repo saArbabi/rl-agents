@@ -7,9 +7,6 @@ from rl_agents.agents.tree_search.abstract import Node, AbstractTreeSearchAgent,
 
 logger = logging.getLogger(__name__)
 
-"""
-see [Adrien Coutoux, 2011][Continuous Upper Confidence Trees]
-"""
 class MCTSDPWAgent(AbstractTreeSearchAgent):
     """
         An MCTS_DPW agent that uses Double Progressive Widenning for handling continuous
@@ -25,6 +22,7 @@ class MCTSDPWAgent(AbstractTreeSearchAgent):
         config.update({
             "budget": 100,
             "horizon": None,
+            "gamma": 0.95,
             "rollout_policy": {"type": "random_available"},
             "env_preprocessors": []
          })
@@ -99,7 +97,7 @@ class MCTSDPWAgent(AbstractTreeSearchAgent):
 
 class MCTSDPW(AbstractPlanner):
     """
-       An implementation of Monte-Carlo Tree Search, with Upper Confidence Tree exploration
+       An implementation of Monte-Carlo Tree Search with Upper Confidence Tree exploration
        and Double Progressive Widenning.
     """
     def __init__(self, env, rollout_policy, config=None):
@@ -125,10 +123,14 @@ class MCTSDPW(AbstractPlanner):
         """
             Allocate the computational budget into M episodes of fixed horizon L.
         """
+        print('budget',budget)
         for episodes in range(1, int(budget)):
             if episodes * MCTSDPW.horizon(episodes, gamma) > budget:
                 episodes = max(episodes - 1, 1)
                 horizon = MCTSDPW.horizon(episodes, gamma)
+                print('episodes',episodes)
+                print('horizon',horizon)
+
                 break
         else:
             raise ValueError("Could not split budget {} with gamma {}".format(budget, gamma))
@@ -138,8 +140,9 @@ class MCTSDPW(AbstractPlanner):
     def default_config(cls):
         cfg = super(MCTSDPW, cls).default_config()
         cfg.update({
-            "temperature": 2 / (1 - cfg["gamma"]),
+            "temperature": 1,
             "closed_loop": False
+
         })
         return cfg
 
@@ -212,7 +215,7 @@ class MCTSDPW(AbstractPlanner):
         super().step_planner(action)
 
 class DecisionNode(Node):
-    k_action = 1 # pw parameters
+    k_action = 4 # pw parameters
     alpha_action = 0.3 # pw parameters
     K = 1.0
     """ The value function first-order filter gain"""
@@ -228,6 +231,7 @@ class DecisionNode(Node):
         # Tie best counts by best value
         actions = list(self.children.keys())
         counts = Node.all_argmax([self.children[a].count for a in actions])
+        print([self.children[a].count for a in actions])
         return actions[max(counts, key=(lambda i: self.children[actions[i]].get_value()))]
 
     def unexplored_actions(self, state):
@@ -239,7 +243,7 @@ class DecisionNode(Node):
             actions = range(state.action_space.n)
         return set(self.children.keys()).symmetric_difference(actions)
 
-    def insert_action_node(self, state):
+    def expand(self, state):
         action = self.planner.np_random.choice(list(self.unexplored_actions(state)))
         self.children[action] = ChanceNode(self, self.planner)
         return self.children[action], action
@@ -251,7 +255,7 @@ class DecisionNode(Node):
             return self.selection_strategy(temperature)
         else:
             # insert a new aciton
-            return self.insert_action_node(state)
+            return self.expand(state)
 
     def update(self, total_reward):
         """
@@ -283,10 +287,9 @@ class DecisionNode(Node):
         actions = list(self.children.keys())
         indexes = []
         for a in actions:
-            ucb_val = self.children[a].get_value() +  temperature * np.sqrt(np.log(self.count / (self.children[a].count)))
+            ucb_val = self.children[a].get_value() +  0.5 * np.sqrt(np.log(self.count / (self.children[a].count)))
             indexes.append(ucb_val)
 
-        # TODO: Some paper return most tried aciton
         action = actions[self.random_argmax(indexes)]
         return self.children[action], action
 
@@ -305,7 +308,7 @@ class ChanceNode(Node):
         self.value = 0
         self.depth = parent.depth
 
-    def insert_state_node(self, obs_id):
+    def expand(self, obs_id):
         self.children[obs_id] = DecisionNode(self, self.planner)
 
     def get_child(self, observation):
@@ -317,8 +320,8 @@ class ChanceNode(Node):
                 return self.children[obs_id]
             else:
                 # Add observation to the children set
-                self.insert_state_node(obs_id)
-        
+                self.expand(obs_id)
+
         return self.children[obs_id]
 
     def update(self, total_reward):
